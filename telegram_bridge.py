@@ -162,7 +162,7 @@ def telegram_get_updates(token: str, offset: int, timeout: int = 1) -> list[dict
     return data.get("result", [])
 
 
-def telegram_send_message(token: str, chat_id: str, text: str) -> None:
+def telegram_send_message(token: str, chat_id: str, text: str, _retries: int = 3) -> None:
     """Send a message to Telegram. Truncates at 4096 chars on a line boundary."""
     suffix = "\n\u2026(truncated)"
     max_len = 4096 - len(suffix)
@@ -177,11 +177,11 @@ def telegram_send_message(token: str, chat_id: str, text: str) -> None:
         json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
         timeout=10,
     )
-    if resp.status_code == 429:
+    if resp.status_code == 429 and _retries > 0:
         retry_after = resp.json().get("parameters", {}).get("retry_after", 5)
-        logger.warning("Telegram rate limited, sleeping %ds", retry_after)
+        logger.warning("Telegram rate limited, sleeping %ds (%d retries left)", retry_after, _retries)
         time.sleep(retry_after)
-        telegram_send_message(token, chat_id, text)
+        telegram_send_message(token, chat_id, text, _retries=_retries - 1)
         return
     resp.raise_for_status()
 
@@ -189,16 +189,6 @@ def telegram_send_message(token: str, chat_id: str, text: str) -> None:
 # ---------------------------------------------------------------------------
 # AgentChattr helpers
 # ---------------------------------------------------------------------------
-
-def agentchattr_check(url: str, token: str = "") -> bool:
-    """Check AgentChattr is reachable. Uses Bearer token if available."""
-    try:
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        resp = requests.get(f"{url}/api/settings", headers=headers, timeout=5)
-        return resp.status_code == 200
-    except requests.RequestException:
-        return False
-
 
 def agentchattr_register(url: str, base: str = "telegram-bridge", label: str = "Telegram Bridge") -> dict:
     """Register the bridge as an API agent. Returns {"name": ..., "token": ...}."""
@@ -295,7 +285,7 @@ def format_message(msg: dict) -> str:
 
     # Channel prefix (omit for general)
     prefix = f"<b>[#{_html_escape(channel)}]</b> " if channel != "general" else ""
-    time_tag = f" <i>({time_str})</i>" if time_str else ""
+    time_tag = f" <i>({_html_escape(time_str)})</i>" if time_str else ""
 
     parts = [f"{prefix}<b>{sender}</b>{time_tag}:\n{text}"]
 
@@ -348,7 +338,7 @@ def handle_telegram_command(tg_token: str, chat_id: str, url: str, ac_token: str
             return
         lines = ["<b>Agent status:</b>"]
         for name, info in status.items():
-            if name == "paused":
+            if name == "paused" or not isinstance(info, dict):
                 continue
             avail = "online" if info.get("available") else "offline"
             active = " (active)" if info.get("active") else ""
@@ -440,8 +430,13 @@ def run(config: dict) -> None:
     # Load cursors
     last_seen_id, tg_update_offset = load_cursor(cursor_file)
 
-    # Register shutdown handler
+    # Register shutdown handler (with guard to prevent double execution)
+    _shutdown_done = [False]
+
     def shutdown():
+        if _shutdown_done[0]:
+            return
+        _shutdown_done[0] = True
         save_cursor(cursor_file, last_seen_id, tg_update_offset)
         # Deregister from AgentChattr to free the slot
         if ac["name"] and ac["token"]:
