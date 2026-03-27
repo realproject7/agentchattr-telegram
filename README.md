@@ -2,8 +2,9 @@
 
 A bidirectional bridge between [AgentChattr](https://github.com/bcurts/agentchattr) and Telegram. Monitor and control your AI coding agents from your phone.
 
-![Web UI](screenshots/web-ui.png)
-![Telegram](screenshots/telegram.png)
+| AgentChattr Web UI | Telegram |
+|:---:|:---:|
+| ![Web UI](screenshots/web-ui.png) | ![Telegram](screenshots/telegram.png) |
 
 ## What it does
 
