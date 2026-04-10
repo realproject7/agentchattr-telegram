@@ -70,6 +70,8 @@ def load_config(config_path: str | None = None) -> dict:
                 config["poll_interval"] = int(tg["poll_interval"])
             if tg.get("bridge_sender"):
                 config["bridge_sender"] = tg["bridge_sender"]
+            if tg.get("cursor_file"):
+                config["cursor_file"] = tg["cursor_file"]
         except Exception as e:
             logger.warning("Could not parse config.toml [telegram] section: %s", e)
 
