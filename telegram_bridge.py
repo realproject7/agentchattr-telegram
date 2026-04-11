@@ -45,7 +45,7 @@ def load_config(config_path: str | None = None) -> dict:
         "telegram_chat_id": "",
         "agentchattr_url": DEFAULT_AGENTCHATTR_URL,
         "poll_interval": DEFAULT_POLL_INTERVAL,
-        "bridge_sender": "telegram-bridge",
+        "bridge_sender": "tg",
         "cursor_file": DEFAULT_CURSOR_FILE,
     }
 
@@ -192,7 +192,7 @@ def telegram_send_message(token: str, chat_id: str, text: str, _retries: int = 3
 # AgentChattr helpers
 # ---------------------------------------------------------------------------
 
-def agentchattr_register(url: str, base: str = "telegram-bridge", label: str = "Telegram Bridge") -> dict:
+def agentchattr_register(url: str, base: str = "tg", label: str = "Telegram Bridge") -> dict:
     """Register the bridge as an API agent. Returns {"name": ..., "token": ...}."""
     resp = requests.post(
         f"{url}/api/register",
