@@ -17,6 +17,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -202,6 +203,54 @@ def agentchattr_register(url: str, base: str = "tg", label: str = "Telegram Brid
     resp.raise_for_status()
     return resp.json()
 
+
+# ---------------------------------------------------------------------------
+# #501: message filter — suppress AC housekeeping noise from bridge output
+# ---------------------------------------------------------------------------
+
+_NOISE_PATTERNS = [
+    re.compile(r"^.+ is online$"),
+    re.compile(r"disconnected \(timeout\)"),
+    re.compile(r"^.+ disconnected$"),
+    re.compile(r"auto-recovered"),
+    re.compile(r"Resuming agent conversation"),
+]
+
+_last_forwarded: dict[tuple[str, str], float] = {}
+_DEDUP_WINDOW = 60  # seconds
+
+
+def _should_forward(msg: dict) -> bool:
+    """Return True if this AC message should be forwarded to Telegram."""
+    sender = msg.get("sender", "")
+    text = msg.get("text", "")
+    msg_type = msg.get("type", "chat")
+
+    if msg_type in ("join", "leave"):
+        return False
+    if sender == "system":
+        return False
+    for pat in _NOISE_PATTERNS:
+        if pat.search(text):
+            return False
+
+    key = (sender, text)
+    now = time.time()
+    last = _last_forwarded.get(key)
+    if last is not None and now - last < _DEDUP_WINDOW:
+        return False
+    _last_forwarded[key] = now
+
+    if len(_last_forwarded) > 500:
+        cutoff = now - _DEDUP_WINDOW
+        stale = [k for k, t in _last_forwarded.items() if t < cutoff]
+        for k in stale:
+            del _last_forwarded[k]
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 
 def agentchattr_send(url: str, token: str, text: str, channel: str = "general") -> int:
     """Send a message to AgentChattr as the bridge agent.
@@ -483,12 +532,10 @@ def run(config: dict) -> None:
                     last_seen_id = max(last_seen_id, msg_id)
                     continue
 
-                # Skip system routing messages
-                if sender == "system" and msg.get("type") == "chat":
-                    text = msg.get("text", "")
-                    if "auto-recovered" in text or "interrupted" in text:
-                        last_seen_id = max(last_seen_id, msg_id)
-                        continue
+                # #501: skip system/status noise and dedup
+                if not _should_forward(msg):
+                    last_seen_id = max(last_seen_id, msg_id)
+                    continue
 
                 formatted = format_message(msg)
                 telegram_send_message(token, chat_id, formatted)
