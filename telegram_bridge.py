@@ -137,6 +137,26 @@ def save_cursor(cursor_file: str, last_seen_id: int, telegram_update_offset: int
         logger.error("Failed to save cursor: %s", e)
 
 
+def _seed_cursor_to_latest(url: str, token: str, cursor_file: str,
+                           last_seen_id: int, tg_offset: int) -> int:
+    """#500: Skip to latest AC message so reconnect doesn't replay old messages.
+    Returns the updated last_seen_id."""
+    try:
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        resp = requests.get(f"{url}/api/messages", params={"limit": 1}, headers=headers, timeout=10)
+        if resp.ok:
+            msgs = resp.json()
+            if isinstance(msgs, list) and msgs:
+                latest_id = max(m.get("id", 0) for m in msgs)
+                if latest_id > last_seen_id:
+                    last_seen_id = latest_id
+                    save_cursor(cursor_file, last_seen_id, tg_offset)
+                    logger.info("Seeded cursor to latest: last_seen_id=%d", latest_id)
+    except Exception as exc:
+        logger.warning("Failed to seed cursor to latest: %s", exc)
+    return last_seen_id
+
+
 # ---------------------------------------------------------------------------
 # Telegram helpers
 # ---------------------------------------------------------------------------
@@ -486,6 +506,9 @@ def run(config: dict) -> None:
     # Load cursors
     last_seen_id, tg_update_offset = load_cursor(cursor_file)
 
+    # #500: seed cursor to latest on startup to avoid replaying history
+    last_seen_id = _seed_cursor_to_latest(url, ac["token"], cursor_file, last_seen_id, tg_update_offset)
+
     # Register shutdown handler (with guard to prevent double execution)
     _shutdown_done = [False]
 
@@ -556,6 +579,7 @@ def run(config: dict) -> None:
                     ac["token"] = reg.get("token", "")
                     ac["name"] = reg.get("name", bridge_sender)
                     logger.info("Re-registered with AgentChattr as '%s'", ac["name"])
+                    last_seen_id = _seed_cursor_to_latest(url, ac["token"], cursor_file, last_seen_id, tg_update_offset)
                 except Exception:
                     logger.warning("Re-registration failed — will retry next cycle")
             else:
