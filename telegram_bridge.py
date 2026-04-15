@@ -221,7 +221,7 @@ _DEDUP_WINDOW = 60  # seconds
 
 
 def _should_forward(msg: dict) -> bool:
-    """Return True if this AC message should be forwarded to Telegram."""
+    """Return True if this AC message should be forwarded. Pure check, no side effects."""
     sender = msg.get("sender", "")
     text = msg.get("text", "")
     msg_type = msg.get("type", "chat")
@@ -239,15 +239,20 @@ def _should_forward(msg: dict) -> bool:
     last = _last_forwarded.get(key)
     if last is not None and now - last < _DEDUP_WINDOW:
         return False
-    _last_forwarded[key] = now
+
+    return True
+
+
+def _mark_forwarded(msg: dict):
+    """Record that a message was successfully forwarded. Call after delivery."""
+    key = (msg.get("sender", ""), msg.get("text", ""))
+    _last_forwarded[key] = time.time()
 
     if len(_last_forwarded) > 500:
-        cutoff = now - _DEDUP_WINDOW
+        cutoff = time.time() - _DEDUP_WINDOW
         stale = [k for k, t in _last_forwarded.items() if t < cutoff]
         for k in stale:
             del _last_forwarded[k]
-
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +544,7 @@ def run(config: dict) -> None:
 
                 formatted = format_message(msg)
                 telegram_send_message(token, chat_id, formatted)
+                _mark_forwarded(msg)
 
                 last_seen_id = max(last_seen_id, msg_id)
 
