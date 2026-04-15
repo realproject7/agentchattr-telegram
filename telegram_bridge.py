@@ -544,12 +544,21 @@ def run(config: dict) -> None:
     # Sticky default channel for operator messages (mutable dict for closure access)
     sticky_channel = {"name": "general"}
 
+    # #500: track connection failures so we can seed cursor on recovery
+    poll_was_failing = False
+
     logger.info("Starting poll loop (interval=%ds, ac_cursor=%d, tg_offset=%d)", interval, last_seen_id, tg_update_offset)
 
     while True:
         # --- Read path: AgentChattr -> Telegram ---
         try:
             messages = agentchattr_poll(url, ac["token"], last_seen_id)
+
+            # #500: if we were failing and just recovered, seed cursor
+            if poll_was_failing:
+                poll_was_failing = False
+                last_seen_id = _seed_cursor_to_latest(url, ac["token"], cursor_file, last_seen_id, tg_update_offset)
+                continue  # re-enter loop with fresh cursor
 
             for msg in messages:
                 msg_id = msg.get("id", 0)
@@ -586,8 +595,10 @@ def run(config: dict) -> None:
                 logger.warning("AgentChattr poll error (will retry): %s", e)
         except requests.RequestException as e:
             logger.warning("AgentChattr poll error (will retry): %s", e)
+            poll_was_failing = True
         except Exception:
             logger.exception("Unexpected error in read path")
+            poll_was_failing = True
 
         # --- Write path: Telegram -> AgentChattr ---
         try:
